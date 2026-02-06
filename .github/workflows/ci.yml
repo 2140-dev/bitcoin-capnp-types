@@ -15,7 +15,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Install Bitcoin Dependencies
-        run: sudo apt-get install build-essential cmake pkgconf python3 libevent-dev libboost-dev capnproto libcapnp-dev
+        run: |
+          sudo apt-get update
+          sudo apt-get install build-essential cmake pkgconf python3 libevent-dev libboost-dev capnproto libcapnp-dev
       - name: Checkout Bitcoin Core v30.0
         run: git clone --depth 1 --branch 30.x https://github.com/bitcoin/bitcoin.git
       - name: Build and Install Bitcoin Core

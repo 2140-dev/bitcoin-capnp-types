@@ -9,8 +9,7 @@
 //!
 //! ```sh
 //! bitcoind -regtest -ipcbind=unix
-//! bitcoin-cli -regtest createwallet miner
-//! bitcoin-cli -regtest -generate 17
+//! bitcoin-cli -regtest generatetodescriptor 17 "raw(51)"
 //! ```
 //!
 //! # Usage

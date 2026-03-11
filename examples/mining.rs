@@ -159,6 +159,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let merkle_path = resp.get()?.get_result()?;
             println!("Coinbase merkle path: {} hash(es)", merkle_path.len() / 32);
 
+            // waitNext — wait briefly for mempool updates (short timeout).
+            println!("Waiting for mempool updates...");
+            let mut req = template.wait_next_request();
+            req.get().get_context()?.set_thread(thread.clone());
+            {
+                let mut opts = req.get().init_options();
+                opts.set_timeout(100.0); // 100 ms
+                opts.set_fee_threshold(mining_capnp::MAX_MONEY);
+            }
+            let resp = req.send().promise.await?;
+            if resp.get()?.has_result() {
+                println!("Updated template available");
+            } else {
+                println!("No mempool updates within timeout");
+            }
+
+            // interruptWait — signal the template to stop waiting.
+            template
+                .interrupt_wait_request()
+                .send()
+                .promise
+                .await?;
+            println!("Interrupted wait");
+
             // Clean up the template.
             let mut req = template.destroy_request();
             req.get().get_context()?.set_thread(thread.clone());

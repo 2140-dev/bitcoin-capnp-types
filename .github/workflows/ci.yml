@@ -37,3 +37,5 @@ jobs:
         run: cd bitcoin && ./build/bin/bitcoin rpc -regtest -rpcwait generatetodescriptor 101 "raw(51)"
       - name: Run Test Suite
         run: cargo test
+      - name: Run Example
+        run: cargo run --example mining

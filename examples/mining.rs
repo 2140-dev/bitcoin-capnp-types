@@ -33,10 +33,7 @@ use tokio::task::LocalSet;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 fn unix_socket_path() -> PathBuf {
-    let home_dir = std::env::var("HOME")
-        .expect("HOME not set")
-        .parse::<PathBuf>()
-        .unwrap();
+    let home_dir = PathBuf::from(std::env::var("HOME").expect("HOME not set"));
     let bitcoin_dir = if cfg!(target_os = "macos") {
         home_dir
             .join("Library")

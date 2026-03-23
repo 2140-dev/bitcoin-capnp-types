@@ -9,6 +9,8 @@ $Cxx.namespace("ipc::capnp::messages");
 
 using Common = import "common.capnp";
 using Proxy = import "proxy.capnp";
+$Proxy.include("interfaces/mining.h");
+$Proxy.includeTypes("ipc/capnp/mining-types.h");
 
 const maxMoney :Int64 = 2100000000000000;
 const maxDouble :Float64 = 1.7976931348623157e308;

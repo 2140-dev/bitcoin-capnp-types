@@ -8,6 +8,8 @@ using Cxx = import "/capnp/c++.capnp";
 $Cxx.namespace("ipc::capnp::messages");
 
 using Proxy = import "proxy.capnp";
+$Proxy.include("interfaces/echo.h");
+$Proxy.includeTypes("ipc/capnp/echo-types.h");
 
 interface Echo $Proxy.wrap("interfaces::Echo") {
     destroy @0 (context :Proxy.Context) -> ();

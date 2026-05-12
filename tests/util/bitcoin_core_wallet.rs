@@ -1,4 +1,8 @@
-use std::process::Command;
+use std::{
+    io::Read,
+    process::{Command, Stdio},
+    time::{Duration, Instant},
+};
 
 use bitcoin_primitives::Transaction as BitcoinTransaction;
 use bitcoin_primitives::hex;
@@ -7,6 +11,16 @@ use serde::de::DeserializeOwned;
 
 fn bitcoin_bin() -> String {
     std::env::var("BITCOIN_BIN").unwrap_or_else(|_| "bitcoin".to_owned())
+}
+
+fn bitcoin_rpc_timeout() -> Duration {
+    const DEFAULT_TIMEOUT_SECS: u64 = 15;
+
+    std::env::var("BITCOIN_RPC_TIMEOUT_SECS")
+        .ok()
+        .and_then(|secs| secs.parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .unwrap_or_else(|| Duration::from_secs(DEFAULT_TIMEOUT_SECS))
 }
 
 fn bitcoin_rpc(wallet: Option<&str>, args: &[&str]) -> Result<String, String> {
@@ -34,19 +48,57 @@ fn bitcoin_rpc_owned(wallet: Option<&str>, args: &[String]) -> Result<String, St
     }
     command.args(args);
 
-    let output = command
-        .output()
+    let rendered_args = args.join(" ");
+    let timeout = bitcoin_rpc_timeout();
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    let mut child = command
+        .spawn()
         .map_err(|e| format!("failed to execute bitcoin rpc command: {e}"))?;
-    if output.status.success() {
-        Ok(String::from_utf8(output.stdout)
-            .unwrap_or_else(|_| String::new())
-            .trim()
-            .to_owned())
-    } else {
-        Err(format!(
-            "bitcoin rpc command failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ))
+    let start = Instant::now();
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let mut stdout = Vec::new();
+                let mut stderr = Vec::new();
+                if let Some(mut pipe) = child.stdout.take() {
+                    pipe.read_to_end(&mut stdout)
+                        .map_err(|e| format!("failed to read bitcoin rpc stdout: {e}"))?;
+                }
+                if let Some(mut pipe) = child.stderr.take() {
+                    pipe.read_to_end(&mut stderr)
+                        .map_err(|e| format!("failed to read bitcoin rpc stderr: {e}"))?;
+                }
+
+                if status.success() {
+                    return Ok(String::from_utf8(stdout)
+                        .unwrap_or_else(|_| String::new())
+                        .trim()
+                        .to_owned());
+                }
+
+                return Err(format!(
+                    "bitcoin rpc command failed ({rendered_args}): {}",
+                    String::from_utf8_lossy(&stderr).trim()
+                ));
+            }
+            Ok(None) => {
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!(
+                        "bitcoin rpc command timed out after {timeout:?} ({rendered_args})"
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("failed to poll bitcoin rpc command status: {e}"));
+            }
+        }
     }
 }
 

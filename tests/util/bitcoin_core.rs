@@ -8,6 +8,7 @@ use crate::bitcoin_core_wallet_util::{
     bitcoin_rpc_json, bitcoin_test_wallet, ensure_wallet_loaded, mine_blocks_to_new_address,
 };
 use bitcoin_capnp_types::{
+    chain_capnp::chain,
     init_capnp::init,
     mining_capnp::{block_template, mining},
     proxy_capnp::{thread, thread_map},
@@ -66,14 +67,24 @@ where
     F: FnOnce(init::Client, thread::Client) -> Fut,
     Fut: Future<Output = ()>,
 {
+    // Per-test wall-clock cap. The happy path of every test in this file
+    // completes in a few seconds against a warm regtest node, but bugs in
+    // the wait/notification machinery (or a stuck node) can make these
+    // futures hang indefinitely -- which then ties up the CI runner until
+    // its job-level timeout fires and prints unhelpful output. Bound it
+    // here so a misbehaving test fails with a clear message instead.
+    const TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
     let rpc_network = connect_unix_stream(unix_socket_path()).await;
     let rpc_system = RpcSystem::new(Box::new(rpc_network), None);
-    LocalSet::new()
-        .run_until(async move {
-            let (client, thread) = bootstrap(rpc_system).await;
-            f(client, thread).await;
-        })
-        .await;
+    let local = LocalSet::new();
+    let body = local.run_until(async move {
+        let (client, thread) = bootstrap(rpc_system).await;
+        f(client, thread).await;
+    });
+    tokio::time::timeout(TEST_TIMEOUT, body)
+        .await
+        .unwrap_or_else(|_| panic!("test exceeded {TEST_TIMEOUT:?} wall-clock budget"));
 }
 
 pub async fn with_mining_client<F, Fut>(f: F)
@@ -84,6 +95,18 @@ where
     with_init_client(|client, thread| async move {
         let mining = make_mining(&client, &thread).await;
         f(client, thread, mining).await;
+    })
+    .await;
+}
+
+pub async fn with_chain_client<F, Fut>(f: F)
+where
+    F: FnOnce(init::Client, thread::Client, chain::Client) -> Fut,
+    Fut: Future<Output = ()>,
+{
+    with_init_client(|client, thread| async move {
+        let chain_client = make_chain(&client, &thread).await;
+        f(client, thread, chain_client).await;
     })
     .await;
 }
@@ -146,6 +169,14 @@ pub async fn bootstrap(
 /// Obtain a Mining client from an Init client.
 pub async fn make_mining(init: &init::Client, thread: &thread::Client) -> mining::Client {
     let mut req = init.make_mining_request();
+    req.get().get_context().unwrap().set_thread(thread.clone());
+    let resp = req.send().promise.await.unwrap();
+    resp.get().unwrap().get_result().unwrap()
+}
+
+/// Obtain a Chain client from an Init client.
+pub async fn make_chain(init: &init::Client, thread: &thread::Client) -> chain::Client {
+    let mut req = init.make_chain_request();
     req.get().get_context().unwrap().set_thread(thread.clone());
     let resp = req.send().promise.await.unwrap();
     resp.get().unwrap().get_result().unwrap()

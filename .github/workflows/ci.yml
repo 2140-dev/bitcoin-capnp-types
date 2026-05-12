@@ -25,7 +25,12 @@ jobs:
           key: ccache-${{ runner.os }}-${{ github.sha }}
           restore-keys: ccache-${{ runner.os }}-
       - name: Checkout Bitcoin Core
-        run: git clone --depth 1 --branch master https://github.com/bitcoin/bitcoin.git
+        run: |
+          git clone --depth 1 https://github.com/bitcoin/bitcoin.git
+          # DO NOT MERGE: switch to bitcoin/bitcoin#29409 PR branch
+          cd bitcoin
+          git fetch --depth 1 origin pull/29409/head:pr-29409
+          git checkout pr-29409
       - name: Build Bitcoin Core
         run: |
           cd bitcoin
@@ -36,4 +41,9 @@ jobs:
       - name: Run Test Suite
         env:
           BITCOIN_BIN: ${{ github.workspace }}/bitcoin/build/bin/bitcoin
-        run: cargo test
+        run: |
+          tests="$(cargo test --test test -- --list | sed -n 's/: test$//p')"
+          while IFS= read -r test_name; do
+            [ -n "$test_name" ] || continue
+            cargo test --test test -- --exact --test-threads=1 "$test_name"
+          done <<< "$tests"

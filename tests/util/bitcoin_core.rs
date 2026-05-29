@@ -70,8 +70,25 @@ where
     let rpc_system = RpcSystem::new(Box::new(rpc_network), None);
     LocalSet::new()
         .run_until(async move {
-            let (client, thread) = bootstrap(rpc_system).await;
+            let (client, _thread_map, thread) = bootstrap(rpc_system).await;
             f(client, thread).await;
+        })
+        .await;
+}
+
+/// Like `with_init_client` but also surfaces the `ThreadMap` capability so the
+/// caller can drive thread-pool setup (`make_pool`) on the connection.
+pub async fn with_init_client_and_thread_map<F, Fut>(f: F)
+where
+    F: FnOnce(init::Client, thread_map::Client, thread::Client) -> Fut,
+    Fut: Future<Output = ()>,
+{
+    let rpc_network = connect_unix_stream(unix_socket_path()).await;
+    let rpc_system = RpcSystem::new(Box::new(rpc_network), None);
+    LocalSet::new()
+        .run_until(async move {
+            let (client, thread_map, thread) = bootstrap(rpc_system).await;
+            f(client, thread_map, thread).await;
         })
         .await;
 }
@@ -117,7 +134,7 @@ pub async fn connect_unix_stream(
 /// Bootstrap an Init client, spawn the RPC system, and create a thread handle.
 pub async fn bootstrap(
     mut rpc_system: RpcSystem<capnp_rpc::rpc_twoparty_capnp::Side>,
-) -> (init::Client, thread::Client) {
+) -> (init::Client, thread_map::Client, thread::Client) {
     ensure_bootstrap_chain_ready();
 
     let client: init::Client = rpc_system.bootstrap(Side::Server);
@@ -140,7 +157,7 @@ pub async fn bootstrap(
         .await
         .unwrap();
     let thread: thread::Client = thread_reponse.get().unwrap().get_result().unwrap();
-    (client, thread)
+    (client, thread_map, thread)
 }
 
 /// Obtain a Mining client from an Init client.

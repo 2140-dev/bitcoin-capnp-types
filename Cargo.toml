@@ -1,6 +1,6 @@
 [package]
 name = "bitcoin-capnp-types"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = ["Rob <rob@2140.dev>"]
 license = "CC0-1.0"

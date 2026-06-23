@@ -1,6 +1,6 @@
 [package]
 name = "bitcoin-capnp-types"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 authors = ["Rob <rob@2140.dev>"]
 license = "CC0-1.0"
@@ -13,12 +13,12 @@ rust-version = "1.85.0"
 
 [dependencies]
 capnp = "0.25.0"
+capnp-rpc = "0.25.0"
 
 [build-dependencies]
 capnpc = "0.25.0"
 
 [dev-dependencies]
-capnp-rpc = "0.25.0"
 futures = "0.3.0"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "io-util"] }
 tokio-util = { version = "0.7.16", features = ["compat"] }

@@ -143,7 +143,7 @@ fn mining_constants() {
     );
 }
 
-/// isTestChain, isInitialBlockDownload, getTip.
+/// isTestChain, isInitialBlockDownload, getTip, getMemoryLoad.
 #[tokio::test]
 #[serial_test::parallel]
 async fn mining_basic_queries() {
@@ -172,6 +172,16 @@ async fn mining_basic_queries() {
         let tip_hash = tip.get_hash().unwrap();
         assert_eq!(tip_hash.len(), 32, "block hash must be 32 bytes");
         assert!(tip.get_height() >= 0, "height must be non-negative");
+
+        // getMemoryLoad
+        let resp = mining
+            .get_memory_load_request()
+            .send()
+            .promise
+            .await
+            .unwrap();
+        let memory_load = resp.get().unwrap().get_result().unwrap();
+        let _usage: u64 = memory_load.get_usage();
     })
     .await;
 }

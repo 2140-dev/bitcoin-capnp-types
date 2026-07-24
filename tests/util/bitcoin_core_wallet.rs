@@ -22,6 +22,14 @@ where
     serde_json::from_str(&output).map_err(|e| format!("failed to parse rpc response as JSON: {e}"))
 }
 
+fn bitcoin_rpc_owned_json<T>(wallet: Option<&str>, args: &[String]) -> Result<T, String>
+where
+    T: DeserializeOwned,
+{
+    let output = bitcoin_rpc_owned(wallet, args)?;
+    serde_json::from_str(&output).map_err(|e| format!("failed to parse rpc response as JSON: {e}"))
+}
+
 pub fn bitcoin_test_wallet() -> String {
     std::env::var("BITCOIN_TEST_WALLET").unwrap_or_else(|_| "ipc-test".to_owned())
 }
@@ -116,10 +124,7 @@ pub fn create_mempool_self_transfer(wallet: &str) -> BitcoinTransaction {
     };
     let raw_tx_hex = bitcoin_rpc(None, &["getrawtransaction", txid_hex.as_str()])
         .unwrap_or_else(|e| panic!("failed to fetch raw transaction {txid_hex}: {e}"));
-    let raw_tx = hex::decode_to_vec(&raw_tx_hex)
-        .unwrap_or_else(|e| panic!("failed to decode raw transaction {txid_hex} from hex: {e}"));
-    let tx: BitcoinTransaction = decode_from_slice(&raw_tx)
-        .unwrap_or_else(|e| panic!("failed to deserialize raw transaction {txid_hex}: {e}"));
+    let tx = transaction_from_hex(&raw_tx_hex);
     let txid = tx.compute_txid();
     let txid_display = format!("{txid:x}");
     assert_eq!(
@@ -127,4 +132,61 @@ pub fn create_mempool_self_transfer(wallet: &str) -> BitcoinTransaction {
         "transaction id from raw tx should match RPC txid"
     );
     tx
+}
+
+pub fn create_unbroadcast_self_transfer(wallet: &str) -> BitcoinTransaction {
+    ensure_wallet_loaded_and_funded(wallet);
+
+    let address = bitcoin_rpc(Some(wallet), &["getnewaddress"])
+        .unwrap_or_else(|e| panic!("failed to get wallet address for {wallet}: {e}"));
+    let outputs = format!("{{\"{address}\":0.01}}");
+    let raw_tx = bitcoin_rpc_owned(
+        Some(wallet),
+        &[
+            "-named".to_owned(),
+            "createrawtransaction".to_owned(),
+            "inputs=[]".to_owned(),
+            format!("outputs={outputs}"),
+        ],
+    )
+    .unwrap_or_else(|e| panic!("failed to create raw transaction for {wallet}: {e}"));
+    let funded: FundRawTransaction = bitcoin_rpc_owned_json(
+        Some(wallet),
+        &[
+            "-named".to_owned(),
+            "fundrawtransaction".to_owned(),
+            format!("hexstring={raw_tx}"),
+            "options={\"fee_rate\":25}".to_owned(),
+        ],
+    )
+    .unwrap_or_else(|e| panic!("failed to fund raw transaction for {wallet}: {e}"));
+    let signed: SignRawTransaction = bitcoin_rpc_owned_json(
+        Some(wallet),
+        &[
+            "-named".to_owned(),
+            "signrawtransactionwithwallet".to_owned(),
+            format!("hexstring={}", funded.hex),
+        ],
+    )
+    .unwrap_or_else(|e| panic!("failed to sign raw transaction for {wallet}: {e}"));
+    assert!(signed.complete, "wallet should fully sign self-transfer");
+    transaction_from_hex(&signed.hex)
+}
+
+fn transaction_from_hex(tx_hex: &str) -> BitcoinTransaction {
+    let raw_tx = hex::decode_to_vec(tx_hex)
+        .unwrap_or_else(|e| panic!("failed to decode raw transaction {tx_hex} from hex: {e}"));
+    decode_from_slice(&raw_tx)
+        .unwrap_or_else(|e| panic!("failed to deserialize raw transaction {tx_hex}: {e}"))
+}
+
+#[derive(serde::Deserialize)]
+struct FundRawTransaction {
+    hex: String,
+}
+
+#[derive(serde::Deserialize)]
+struct SignRawTransaction {
+    hex: String,
+    complete: bool,
 }

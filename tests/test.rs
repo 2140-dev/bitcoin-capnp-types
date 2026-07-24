@@ -1,21 +1,23 @@
+use bitcoin::Block as BitcoinBlock;
 use bitcoin_capnp_types::{
     init_capnp::init,
-    mining_capnp,
+    mining_capnp::{self, block_template, tx_collection},
     proxy_capnp::{thread, thread_map},
 };
 use capnp_rpc::{RpcSystem, rpc_twoparty_capnp::Side};
-use encoding::encode_to_vec;
 use tokio::task::LocalSet;
 
 mod util;
 
+use encoding::{decode_from_slice, encode_to_vec};
 use serde_json::{Value, json};
 use util::bitcoin_core::{
     connect_unix_stream, destroy_template, make_block_template, mempool_tx_count, unix_socket_path,
     with_init_client, with_mining_client, with_rpc_client,
 };
 use util::bitcoin_core_wallet::{
-    bitcoin_test_wallet, create_mempool_self_transfer, ensure_wallet_loaded_and_funded,
+    bitcoin_rpc_json, bitcoin_test_wallet, create_mempool_self_transfer,
+    create_unbroadcast_self_transfer, ensure_wallet_loaded_and_funded, mine_blocks_to_new_address,
 };
 use util::block::{block_solution, block_with_pow};
 
@@ -61,6 +63,111 @@ async fn submit_solution(
 async fn get_template_block(template: &mining_capnp::block_template::Client) -> Vec<u8> {
     let resp = template.get_block_request().send().promise.await.unwrap();
     resp.get().unwrap().get_result().unwrap().to_vec()
+}
+
+async fn get_tip_hash(mining: &mining_capnp::mining::Client) -> Vec<u8> {
+    let resp = mining.get_tip_request().send().promise.await.unwrap();
+    resp.get()
+        .unwrap()
+        .get_result()
+        .unwrap()
+        .get_hash()
+        .unwrap()
+        .to_vec()
+}
+
+async fn collect_txs(
+    mining: &mining_capnp::mining::Client,
+    wtxids: &[&[u8]],
+) -> tx_collection::Client {
+    let mut req = mining.collect_txs_request();
+    {
+        let mut request_wtxids = req.get().init_wtxids(wtxids.len() as u32);
+        for (pos, wtxid) in wtxids.iter().enumerate() {
+            request_wtxids.set(pos as u32, wtxid);
+        }
+    }
+    let resp = req.send().promise.await.unwrap();
+    resp.get().unwrap().get_result().unwrap()
+}
+
+async fn tx_collection_unknown_pos(collection: &tx_collection::Client) -> Vec<u32> {
+    let resp = collection
+        .unknown_tx_pos_request()
+        .send()
+        .promise
+        .await
+        .unwrap();
+    let positions = resp.get().unwrap().get_result().unwrap();
+    (0..positions.len()).map(|pos| positions.get(pos)).collect()
+}
+
+async fn add_missing_txs(collection: &tx_collection::Client, txs: &[&[u8]]) {
+    let mut req = collection.add_missing_txs_request();
+    {
+        let mut request_txs = req.get().init_txs(txs.len() as u32);
+        for (pos, tx) in txs.iter().enumerate() {
+            request_txs.set(pos as u32, tx);
+        }
+    }
+    req.send().promise.await.unwrap();
+}
+
+async fn make_tx_collection_template(
+    collection: &tx_collection::Client,
+    prevhash: &[u8],
+    coinbase: Option<&[u8]>,
+) -> (String, String, Option<block_template::Client>) {
+    let mut req = collection.make_template_request();
+    req.get().set_prevhash(prevhash);
+    if let Some(coinbase) = coinbase {
+        req.get().set_coinbase(coinbase);
+    }
+    let resp = req.send().promise.await.unwrap();
+    let results = resp.get().unwrap();
+    let reason = results.get_reason().unwrap().to_string().unwrap();
+    let debug = results.get_debug().unwrap().to_string().unwrap();
+    let template = results.has_result().then(|| results.get_result().unwrap());
+    (reason, debug, template)
+}
+
+/// Builds a minimal serialized coinbase transaction for the given block
+/// height: one null input with a BIP34 height push, one zero-value output.
+fn build_coinbase_tx_bytes(next_height: u32) -> Vec<u8> {
+    // Encode the height as a minimally pushed little-endian integer (BIP34 style).
+    let mut height_bytes = Vec::new();
+    let mut value = next_height;
+    while value > 0 {
+        height_bytes.push((value & 0xff) as u8);
+        value >>= 8;
+    }
+    if height_bytes.last().is_some_and(|byte| byte & 0x80 != 0) {
+        height_bytes.push(0x00);
+    }
+    let mut script_sig = vec![height_bytes.len() as u8];
+    script_sig.extend_from_slice(&height_bytes);
+    // scriptSig must be at least 2 bytes to avoid bad-cb-length
+    if script_sig.len() < 2 {
+        script_sig.push(0x00);
+    }
+
+    let mut tx = Vec::new();
+    tx.extend_from_slice(&2u32.to_le_bytes()); // version
+    tx.push(1); // input count
+    tx.extend_from_slice(&[0u8; 32]); // null prevout hash
+    tx.extend_from_slice(&u32::MAX.to_le_bytes()); // null prevout index
+    tx.push(script_sig.len() as u8);
+    tx.extend_from_slice(&script_sig);
+    tx.extend_from_slice(&u32::MAX.to_le_bytes()); // sequence
+    tx.push(1); // output count
+    tx.extend_from_slice(&0u64.to_le_bytes()); // value
+    tx.push(0); // empty script pubkey
+    tx.extend_from_slice(&0u32.to_le_bytes()); // lock time
+    tx
+}
+
+async fn destroy_tx_collection(collection: &tx_collection::Client) {
+    collection.destroy_request().send().promise.await.unwrap();
 }
 
 #[tokio::test]
@@ -407,6 +514,139 @@ async fn mining_submit_block_insufficient_pow() {
         assert_eq!(outcome.debug, "proof of work failed");
 
         destroy_template(&template).await;
+    })
+    .await;
+}
+
+/// collectTxs + TxCollection workflow with one mempool transaction and one
+/// transaction supplied by the client.
+#[tokio::test]
+#[serial_test::serial]
+async fn mining_tx_collection_workflow() {
+    with_mining_client(|_client, mining| async move {
+        let wallet = bitcoin_test_wallet();
+        ensure_wallet_loaded_and_funded(&wallet);
+        if mempool_tx_count() > 0 {
+            mine_blocks_to_new_address(&wallet, 1).unwrap_or_else(|e| {
+                panic!("failed to clear mempool before tx collection test: {e}")
+            });
+        }
+
+        let mempool_tx = create_mempool_self_transfer(&wallet);
+        let client_tx = create_unbroadcast_self_transfer(&wallet);
+        let mempool_wtxid = mempool_tx.compute_wtxid().to_byte_array();
+        let client_wtxid = client_tx.compute_wtxid().to_byte_array();
+        let client_raw_tx = encode_to_vec(&client_tx);
+
+        let mut duplicate_req = mining.collect_txs_request();
+        {
+            let mut wtxids = duplicate_req.get().init_wtxids(2);
+            wtxids.set(0, &mempool_wtxid);
+            wtxids.set(1, &mempool_wtxid);
+        }
+        assert!(
+            duplicate_req.send().promise.await.is_err(),
+            "collectTxs must reject duplicate wtxids"
+        );
+
+        let collection = collect_txs(&mining, &[&mempool_wtxid, &client_wtxid]).await;
+        assert_eq!(
+            tx_collection_unknown_pos(&collection).await,
+            vec![1],
+            "client-only transaction should be reported missing"
+        );
+
+        let tip = get_tip_hash(&mining).await;
+        let (reason, debug, template) = make_tx_collection_template(&collection, &tip, None).await;
+        assert_eq!(reason, "missing-txs");
+        assert!(
+            !debug.is_empty(),
+            "missing transaction should explain failure"
+        );
+        assert!(
+            template.is_none(),
+            "missing transaction should block template"
+        );
+
+        add_missing_txs(&collection, &[&client_raw_tx]).await;
+        assert_eq!(
+            tx_collection_unknown_pos(&collection).await,
+            Vec::<u32>::new(),
+            "all requested transactions should be available after addMissingTxs"
+        );
+
+        let (reason, debug, template) = make_tx_collection_template(&collection, &tip, None).await;
+        assert_eq!(reason, "");
+        assert_eq!(debug, "");
+        let template = template.expect("complete collection should create a block template");
+        let block = get_template_block(&template).await;
+        let block: BitcoinBlock =
+            decode_from_slice(&block).unwrap_or_else(|e| panic!("failed to decode block: {e}"));
+        let (_, transactions) = block.into_parts();
+        assert_eq!(
+            transactions[1].compute_wtxid().to_byte_array(),
+            mempool_wtxid,
+            "mempool transaction should keep the requested position"
+        );
+        assert_eq!(
+            transactions[2].compute_wtxid().to_byte_array(),
+            client_wtxid,
+            "client-supplied transaction should keep the requested position"
+        );
+
+        // A client-provided "coinbase" that is not actually a coinbase is rejected.
+        let (reason, _debug, bad_template) =
+            make_tx_collection_template(&collection, &tip, Some(&client_raw_tx)).await;
+        assert_eq!(reason, "bad-cb-missing");
+        assert!(
+            bad_template.is_none(),
+            "non-coinbase transaction should block template"
+        );
+
+        destroy_template(&template).await;
+        destroy_tx_collection(&collection).await;
+    })
+    .await;
+}
+
+/// makeTemplate with a client-provided coinbase validates the block with it.
+#[tokio::test]
+#[serial_test::serial]
+async fn mining_tx_collection_client_coinbase() {
+    with_mining_client(|_client, mining| async move {
+        let collection = collect_txs(&mining, &[]).await;
+        let tip = get_tip_hash(&mining).await;
+        let height: u32 = bitcoin_rpc_json(None, &["getblockcount"])
+            .unwrap_or_else(|e| panic!("failed to get block count: {e}"));
+        let coinbase = build_coinbase_tx_bytes(height + 1);
+
+        let (reason, debug, template) =
+            make_tx_collection_template(&collection, &tip, Some(&coinbase)).await;
+        assert_eq!(reason, "");
+        assert_eq!(debug, "");
+        let template = template.expect("valid client coinbase should create a block template");
+        let block = get_template_block(&template).await;
+        let block: BitcoinBlock =
+            decode_from_slice(&block).unwrap_or_else(|e| panic!("failed to decode block: {e}"));
+        let (_, transactions) = block.into_parts();
+        assert_eq!(
+            encode_to_vec(&transactions[0]),
+            coinbase,
+            "template should use the client-provided coinbase"
+        );
+
+        // A coinbase for the wrong height fails BIP34 validation.
+        let bad_coinbase = build_coinbase_tx_bytes(height + 2);
+        let (reason, _debug, bad_template) =
+            make_tx_collection_template(&collection, &tip, Some(&bad_coinbase)).await;
+        assert_eq!(reason, "bad-cb-height");
+        assert!(
+            bad_template.is_none(),
+            "wrong-height coinbase should block template"
+        );
+
+        destroy_template(&template).await;
+        destroy_tx_collection(&collection).await;
     })
     .await;
 }

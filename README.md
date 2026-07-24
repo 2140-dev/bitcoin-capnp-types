@@ -34,7 +34,7 @@ cargo build
 
 ## Running integration tests
 
-The integration tests connect to a running bitcoin node via IPC.
+The integration tests connect to a running bitcoin node via IPC. For a single test script, see `contrib/run-tests.sh`.
 
 ### 1. Build Bitcoin Core
 

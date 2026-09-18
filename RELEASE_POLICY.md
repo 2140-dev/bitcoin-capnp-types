@@ -13,9 +13,22 @@ This policy applies to:
 
 ## Branch Model
 
-- `master` tracks the current active development line.
-- Maintenance branches (for example `30.x`, `31.x`) track stable backport lines.
+- `master` tracks the current active development line, i.e. Bitcoin Core `master`.
+- Maintenance branches (for example `30.x`, `31.x`) track stable backport lines, i.e. the Bitcoin Core branch of the same name.
 - A release must be cut from the branch that owns that version line.
+
+### Maintenance Branches
+
+- A maintenance branch is created from `master` after Bitcoin Core branches off, at a point where the schema files match the new Bitcoin Core branch.
+- Its CI builds the Bitcoin Core branch of the same name, and runs for pushes and pull requests that target the maintenance branch.
+- After creation it only receives backports from `master` and fixes specific to that branch. It must never be fast-forwarded to, or merged with, `master`.
+- The schema files must keep matching the corresponding Bitcoin Core branch. Interface changes are only backported if Bitcoin Core backported them. Test and build changes can be backported more freely.
+- Backported commits reference the original pull request and commit on `master`, using the Bitcoin Core convention:
+
+  ```
+  Github-Pull: #<number>
+  Rebased-From: <commit hash on master>
+  ```
 
 ## Version Line Mapping
 

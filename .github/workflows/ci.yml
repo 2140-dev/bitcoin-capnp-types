@@ -3,10 +3,10 @@ name: CI
 on:
   push:
     branches:
-      - master
+      - 32.x
   pull_request:
     branches:
-      - master
+      - 32.x
 
 jobs:
   test:
@@ -25,7 +25,7 @@ jobs:
           key: ccache-${{ runner.os }}-${{ github.sha }}
           restore-keys: ccache-${{ runner.os }}-
       - name: Checkout Bitcoin Core
-        run: git clone --depth 1 --branch master https://github.com/bitcoin/bitcoin.git
+        run: git clone --depth 1 --branch 32.x https://github.com/bitcoin/bitcoin.git
       - name: Build Bitcoin Core
         run: |
           cd bitcoin

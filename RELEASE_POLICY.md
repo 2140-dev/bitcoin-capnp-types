@@ -34,6 +34,7 @@ This policy applies to:
 
 - `30.x` branch -> `0.1.x`
 - `31.x` branch -> `0.2.x`
+- `32.x` branch -> `0.3.x`
 - Future Bitcoin Core branch lines should get a new crate minor line (`0.N.x`).
 
 ## Required Invariants

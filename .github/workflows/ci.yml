@@ -26,14 +26,5 @@ jobs:
           restore-keys: ccache-${{ runner.os }}-
       - name: Checkout Bitcoin Core
         run: git clone --depth 1 --branch master https://github.com/bitcoin/bitcoin.git
-      - name: Build Bitcoin Core
-        run: |
-          cd bitcoin
-          cmake -B build -DENABLE_WALLET=ON -DBUILD_TESTS=OFF -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-          cmake --build build -j $(nproc)
-      - name: Run Bitcoin Core Daemon
-        run: cd bitcoin && ./build/bin/bitcoin node -chain=regtest -ipcbind=unix -server -debug=ipc -daemon
-      - name: Run Test Suite
-        env:
-          BITCOIN_BIN: ${{ github.workspace }}/bitcoin/build/bin/bitcoin
-        run: cargo test
+      - name: Build & Run Test Suite
+        run: contrib/run-tests.sh bitcoin

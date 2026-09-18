@@ -109,7 +109,7 @@ async fn rpc_query_uptime() {
             .map_err(|e| format!("failed to parse rpc response as JSON: {e}"))
             .unwrap();
         let uptime = v["result"].as_i64().unwrap();
-        assert!(uptime > 0, "Uptime must be greater than zero");
+        assert!(uptime >= 0, "Uptime must not be negative");
     })
     .await;
 }

@@ -25,7 +25,7 @@ echo "==> Building Bitcoin Core in $BITCOIN_SRC"
                      -DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
     fi
     cmake -B build "${CMAKE_ARGS[@]}"
-    cmake --build build -j"$(nproc)"
+    cmake --build build --parallel "$(getconf _NPROCESSORS_ONLN)"
 )
 
 stop_bitcoin() {

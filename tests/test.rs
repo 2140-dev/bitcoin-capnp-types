@@ -114,6 +114,51 @@ async fn rpc_query_uptime() {
     .await;
 }
 
+/// Invalid JSON in an executeRpc request must be rejected, and the connection
+/// should keep working afterwards.
+#[tokio::test]
+#[serial_test::parallel]
+async fn rpc_invalid_json_rejected() {
+    with_rpc_client(|_client, rpc| async move {
+        let mut invalid_request = rpc.execute_rpc_request();
+        invalid_request.get().set_request("invalid json");
+        invalid_request.get().set_uri("/");
+        let err = match invalid_request.send().promise.await {
+            Ok(_) => panic!("invalid JSON should be rejected by the server"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("invalid JSON received over IPC"),
+            "unexpected error: {err}"
+        );
+
+        // The connection still works after the failed call.
+        let mut valid_request = rpc.execute_rpc_request();
+        let j: Value = json!({
+            "jsonrpc": "2.0",
+            "id": "test",
+            "method": "getblockcount",
+            "params": [],
+        });
+        valid_request.get().set_request(j.to_string());
+        valid_request.get().set_uri("/");
+        let response = valid_request.send().promise.await.unwrap();
+        let result = response
+            .get()
+            .unwrap()
+            .get_result()
+            .unwrap()
+            .to_string()
+            .unwrap();
+        let v: Value = serde_json::from_str(&result).unwrap();
+        assert!(
+            v["result"].as_i64().is_some(),
+            "getblockcount should return a number: {v}"
+        );
+    })
+    .await;
+}
+
 /// Calling the deprecated makeMiningOld2 (@2) should return an error from the
 /// server. Cap'n Proto requires sequential ordinals so this placeholder cannot
 /// be removed, but the server intentionally rejects it.

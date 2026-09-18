@@ -27,4 +27,7 @@ jobs:
       - name: Checkout Bitcoin Core
         run: git clone --depth 1 --branch master https://github.com/bitcoin/bitcoin.git
       - name: Build & Run Test Suite
-        run: contrib/run-tests.sh bitcoin
+        run: |
+          ccache --zero-stats
+          contrib/run-tests.sh bitcoin
+          ccache --show-stats

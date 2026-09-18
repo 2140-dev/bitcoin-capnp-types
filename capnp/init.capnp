@@ -15,7 +15,9 @@ using Rpc = import "rpc.capnp";
 interface Init $Proxy.wrap("interfaces::Init") {
     construct @0 (threadMap: Proxy.ThreadMap) -> (threadMap :Proxy.ThreadMap);
     makeEcho @1 (context :Proxy.Context) -> (result :Echo.Echo);
-    makeMiningOld2 @2 () -> ();
     makeMining @3 (context :Proxy.Context) -> (result :Mining.Mining);
     makeRpc @4 (context :Proxy.Context) -> (result :Rpc.Rpc);
+
+    # DEPRECATED: no longer supported; server returns an error.
+    makeMiningOld2 @2 () -> ();
 }

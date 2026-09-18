@@ -19,9 +19,12 @@ capnp-rpc = "0.25.0"
 capnpc = "0.25.0"
 
 [dev-dependencies]
-bitcoin = { git = "https://github.com/rust-bitcoin/rust-bitcoin", package = "bitcoin", tag = "bitcoin-0.33.0-beta" }
-bitcoin-primitives = { git = "https://github.com/rust-bitcoin/rust-bitcoin", package = "bitcoin-primitives", tag = "bitcoin-0.33.0-beta" }
-encoding = { git = "https://github.com/rust-bitcoin/rust-bitcoin", package = "bitcoin-consensus-encoding", tag = "bitcoin-0.33.0-beta" }
+# Pinned to a rust-bitcoin master commit, because bitcoin 0.33.0-beta depends
+# on a yanked secp256k1 beta. Switch to bitcoin 0.34(-beta) once released:
+# https://github.com/rust-bitcoin/rust-bitcoin/pull/6541
+bitcoin = { git = "https://github.com/rust-bitcoin/rust-bitcoin", package = "bitcoin", rev = "4af1ee1dfc8fcdefcff4204b3066afa3f758319a" }
+bitcoin-primitives = { git = "https://github.com/rust-bitcoin/rust-bitcoin", package = "bitcoin-primitives", rev = "4af1ee1dfc8fcdefcff4204b3066afa3f758319a" }
+encoding = { git = "https://github.com/rust-bitcoin/rust-bitcoin", package = "bitcoin-consensus-encoding", rev = "4af1ee1dfc8fcdefcff4204b3066afa3f758319a" }
 futures = "0.3.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

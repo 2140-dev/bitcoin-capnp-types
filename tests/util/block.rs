@@ -1,4 +1,4 @@
-use bitcoin::pow::Target;
+use bitcoin::pow::{Target, TargetExt as _};
 use bitcoin::{Block as BitcoinBlock, BlockHeader, compute_merkle_root};
 use encoding::{decode_from_slice, encode_to_vec};
 

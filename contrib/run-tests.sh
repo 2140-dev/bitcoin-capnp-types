@@ -15,6 +15,7 @@ fi
 BITCOIN_SRC=$(cd "$1" && pwd)
 REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 BITCOIN_BIN="$BITCOIN_SRC/build/bin/bitcoin"
+TEMP_DATADIR=$(mktemp -d)
 
 echo "==> Building Bitcoin Core in $BITCOIN_SRC"
 (
@@ -31,17 +32,17 @@ echo "==> Building Bitcoin Core in $BITCOIN_SRC"
 stop_bitcoin() {
     if [ -n "${BITCOIN_STARTED:-}" ]; then
         echo "==> Stopping bitcoin"
-        "$BITCOIN_BIN" rpc -chain=regtest stop || true
+        "$BITCOIN_BIN" rpc -chain=regtest -datadir="$TEMP_DATADIR" stop || true
     fi
 }
 trap stop_bitcoin EXIT
 
-echo "==> Starting bitcoin node (regtest, IPC)"
-"$BITCOIN_BIN" node -chain=regtest -ipcbind=unix -server -debug=ipc -daemon
+echo "==> Starting bitcoin node (regtest, IPC) with -datadir=$TEMP_DATADIR"
+"$BITCOIN_BIN" node -chain=regtest -ipcbind=unix -server -debug=ipc -datadir="$TEMP_DATADIR" -daemon
 BITCOIN_STARTED=1
 
 echo "==> Running cargo test"
 (
     cd "$REPO_ROOT"
-    BITCOIN_BIN="$BITCOIN_BIN" cargo test
+    BITCOIN_BIN="$BITCOIN_BIN" BITCOIN_DATADIR="$TEMP_DATADIR" cargo test
 )

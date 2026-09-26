@@ -5,7 +5,8 @@ use std::{
 };
 
 use crate::util::bitcoin_core_wallet::{
-    bitcoin_rpc_json, bitcoin_test_wallet, ensure_wallet_loaded, mine_blocks_to_new_address,
+    bitcoin_datadir, bitcoin_rpc_json, bitcoin_test_wallet, ensure_wallet_loaded,
+    mine_blocks_to_new_address,
 };
 use bitcoin_capnp_types::{
     init_capnp::init,
@@ -23,15 +24,20 @@ use tokio_util::compat::{Compat, TokioAsyncReadCompatExt, TokioAsyncWriteCompatE
 static CHAIN_SETUP: Once = Once::new();
 
 pub fn unix_socket_path() -> PathBuf {
-    let home_dir_string = std::env::var("HOME").unwrap();
-    let home_dir = home_dir_string.parse::<PathBuf>().unwrap();
-    let bitcoin_dir = if cfg!(target_os = "macos") {
-        home_dir
-            .join("Library")
-            .join("Application Support")
-            .join("Bitcoin")
-    } else {
-        home_dir.join(".bitcoin")
+    let bitcoin_dir = match bitcoin_datadir() {
+        Some(datadir) => datadir.parse::<PathBuf>().unwrap(),
+        None => {
+            let home_dir_string = std::env::var("HOME").unwrap();
+            let home_dir = home_dir_string.parse::<PathBuf>().unwrap();
+            if cfg!(target_os = "macos") {
+                home_dir
+                    .join("Library")
+                    .join("Application Support")
+                    .join("Bitcoin")
+            } else {
+                home_dir.join(".bitcoin")
+            }
+        }
     };
     let regtest_dir = bitcoin_dir.join("regtest");
     regtest_dir.join("node.sock")

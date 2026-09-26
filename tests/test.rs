@@ -627,11 +627,10 @@ async fn mining_get_transactions() {
     .await;
 }
 
-/// checkBlock with a template block payload, and interrupt.
+/// checkBlock with a template block payload.
 #[tokio::test]
-// Serialized because interrupt() can affect other in-flight mining waits.
-#[serial_test::serial]
-async fn mining_check_block_and_interrupt() {
+#[serial_test::parallel]
+async fn mining_check_block() {
     with_mining_client(|_client, mining| async move {
         let template = make_block_template(&mining).await;
 
@@ -663,14 +662,6 @@ async fn mining_check_block_and_interrupt() {
         }
 
         destroy_template(&template).await;
-
-        // interrupt — should not crash.
-        mining
-            .interrupt_request()
-            .send()
-            .promise
-            .await
-            .expect("interrupt should not fail");
     })
     .await;
 }

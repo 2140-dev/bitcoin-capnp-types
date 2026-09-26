@@ -5,6 +5,7 @@ use bitcoin_capnp_types::{
 };
 use capnp_rpc::{RpcSystem, rpc_twoparty_capnp::Side};
 use encoding::encode_to_vec;
+use std::time::Duration;
 use tokio::task::LocalSet;
 
 mod util;
@@ -242,6 +243,32 @@ async fn mining_wait_tip_changed() {
         let wait_result = resp.get().unwrap().get_result().unwrap();
         assert_eq!(wait_result.get_hash().unwrap().len(), 32);
         assert_eq!(wait_result.get_height(), tip_height);
+
+        // No timeout. Pin a local task on the wait, then interrupt it.
+        let mut req = mining.wait_tip_changed_request();
+        req.get().set_current_tip(&tip_hash);
+        let waiter = tokio::task::spawn_local(req.send().promise);
+
+        // Give the waiter time to block before interrupting.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            !waiter.is_finished(),
+            "waitTipChanged returned before interrupt"
+        );
+        mining
+            .interrupt_request()
+            .send()
+            .promise
+            .await
+            .expect("interrupt should not fail");
+
+        let joined = tokio::time::timeout(Duration::from_secs(10), waiter)
+            .await
+            .expect("interrupt should unblock waitTipChanged");
+        assert!(
+            joined.is_ok_and(|resp| resp.is_ok()),
+            "interrupted waitTipChanged should return normally"
+        );
     })
     .await;
 }
@@ -333,7 +360,7 @@ async fn mining_block_template_inspection() {
     .await;
 }
 
-/// waitNext (short timeout), interruptWait, submitSolution (garbage), destroy.
+/// waitNext (short timeout), waitNext interrupted by interruptWait, submitSolution (garbage), destroy.
 #[tokio::test]
 // Serialized because submitSolution behavior depends on current chain tip.
 #[serial_test::serial]
@@ -355,13 +382,33 @@ async fn mining_block_template_lifecycle() {
             "waitNext should time out without a new template"
         );
 
-        // interruptWait — should not crash.
+        // waitNext — no timeout. Pin a local task on the wait, then interrupt it.
+        let mut req = template.wait_next_request();
+        req.get()
+            .init_options()
+            .set_fee_threshold(mining_capnp::MAX_MONEY);
+        let waiter = tokio::task::spawn_local(req.send().promise);
+
+        // Give the waiter time to block before interrupting.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            !waiter.is_finished(),
+            "waitNext returned before interruptWait"
+        );
         template
             .interrupt_wait_request()
             .send()
             .promise
             .await
             .expect("interruptWait should not fail");
+
+        let joined = tokio::time::timeout(Duration::from_secs(10), waiter)
+            .await
+            .expect("interrupWait should unblock waitNext");
+        assert!(
+            joined.is_ok_and(|resp| resp.is_ok()),
+            "interrupted waitNext should return normally"
+        );
 
         // submitSolution — garbage coinbase should be rejected.
         // This mutates the template, so we do it right before destroy.

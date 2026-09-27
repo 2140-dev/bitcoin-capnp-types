@@ -25,7 +25,12 @@ jobs:
           key: ccache-${{ runner.os }}-${{ github.sha }}
           restore-keys: ccache-${{ runner.os }}-
       - name: Checkout Bitcoin Core
-        run: git clone --depth 1 --branch master https://github.com/bitcoin/bitcoin.git
+        run: |
+          git clone --depth 1 https://github.com/bitcoin/bitcoin.git
+          # DO NOT MERGE: switch to bitcoin/bitcoin#36097 PR branch
+          cd bitcoin
+          git fetch --depth 1 origin pull/36097/head:pr-36097
+          git checkout pr-36097
       - name: Build & Run Test Suite
         run: |
           ccache --zero-stats

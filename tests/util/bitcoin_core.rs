@@ -11,7 +11,7 @@ use crate::util::bitcoin_core_wallet::{
 use bitcoin_capnp_types::{
     init_capnp::init,
     mining_capnp::{block_template, mining},
-    proxy_capnp::thread_map,
+    proxy_capnp::{thread, thread_map},
     rpc_capnp::rpc,
 };
 use capnp_rpc::{RpcSystem, rpc_twoparty_capnp::Side, twoparty::VatNetwork};
@@ -163,6 +163,17 @@ pub async fn bootstrap(
 /// Obtain a Mining client from an Init client.
 pub async fn make_mining(init: &init::Client) -> mining::Client {
     let resp = init.make_mining_request().send().promise.await.unwrap();
+    resp.get().unwrap().get_result().unwrap()
+}
+
+/// Create a dedicated server thread. Requests with `context.thread` set to the
+/// returned handle run on that thread instead of the worker pool.
+pub async fn make_thread(init: &init::Client, name: &str) -> thread::Client {
+    let resp = init.construct_request().send().promise.await.unwrap();
+    let thread_map: thread_map::Client = resp.get().unwrap().get_thread_map().unwrap();
+    let mut req = thread_map.make_thread_request();
+    req.get().set_name(name);
+    let resp = req.send().promise.await.unwrap();
     resp.get().unwrap().get_result().unwrap()
 }
 

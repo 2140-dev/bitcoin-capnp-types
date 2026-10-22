@@ -14,13 +14,14 @@ This policy applies to:
 ## Branch Model
 
 - `master` tracks the current active development line.
-- Maintenance branches (for example `30.x`, `31.x`) track stable backport lines.
+- Maintenance branches (for example `30.x`, `31.x`, `32.x`) track stable backport lines.
 - A release must be cut from the branch that owns that version line.
 
 ## Version Line Mapping
 
 - `30.x` branch -> `0.1.x`
 - `31.x` branch -> `0.2.x`
+- `32.x` branch -> `0.3.x`
 - Future Bitcoin Core branch lines should get a new crate minor line (`0.N.x`).
 
 ## Required Invariants

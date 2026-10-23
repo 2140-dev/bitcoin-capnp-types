@@ -5,6 +5,7 @@ use bitcoin_capnp_types::{
 };
 use capnp_rpc::{RpcSystem, rpc_twoparty_capnp::Side};
 use encoding::encode_to_vec;
+use futures::FutureExt;
 use std::time::Duration;
 use tokio::task::LocalSet;
 
@@ -12,8 +13,8 @@ mod util;
 
 use serde_json::{Value, json};
 use util::bitcoin_core::{
-    connect_unix_stream, destroy_template, make_block_template, mempool_tx_count, unix_socket_path,
-    with_init_client, with_mining_client, with_rpc_client,
+    connect_unix_stream, destroy_template, make_block_template, make_thread, mempool_tx_count,
+    unix_socket_path, with_init_client, with_mining_client, with_rpc_client,
 };
 use util::bitcoin_core_wallet::{
     bitcoin_test_wallet, create_mempool_self_transfer, ensure_wallet_loaded_and_funded,
@@ -227,7 +228,7 @@ async fn mining_basic_queries() {
 // Serialized because this assertion is sensitive to concurrent tip changes.
 #[serial_test::serial]
 async fn mining_wait_tip_changed() {
-    with_mining_client(|_client, mining| async move {
+    with_mining_client(|init, mining| async move {
         // Get the current tip first.
         let resp = mining.get_tip_request().send().promise.await.unwrap();
         let results = resp.get().unwrap();
@@ -244,31 +245,30 @@ async fn mining_wait_tip_changed() {
         assert_eq!(wait_result.get_hash().unwrap().len(), 32);
         assert_eq!(wait_result.get_height(), tip_height);
 
-        // No timeout. Pin a local task on the wait, then interrupt it.
+        // No timeout. Block a dedicated server thread on the wait, then drop
+        // the promise to cancel it.
+        let thread = make_thread(&init, "wait_tip_changed").await;
         let mut req = mining.wait_tip_changed_request();
+        req.get().get_context().unwrap().set_thread(thread.clone());
         req.get().set_current_tip(&tip_hash);
-        let waiter = tokio::task::spawn_local(req.send().promise);
+        let mut wait = req.send().promise;
 
-        // Give the waiter time to block before interrupting.
+        // Give the server thread time to block before cancelling.
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(
-            !waiter.is_finished(),
-            "waitTipChanged returned before interrupt"
+            (&mut wait).now_or_never().is_none(),
+            "waitTipChanged returned before cancel"
         );
-        mining
-            .interrupt_request()
-            .send()
-            .promise
-            .await
-            .expect("interrupt should not fail");
+        drop(wait);
 
-        let joined = tokio::time::timeout(Duration::from_secs(10), waiter)
+        // A server thread runs one call at a time, so this only completes if
+        // dropping the promise stopped the wait on the server.
+        let mut req = mining.get_tip_request();
+        req.get().get_context().unwrap().set_thread(thread);
+        tokio::time::timeout(Duration::from_secs(10), req.send().promise)
             .await
-            .expect("interrupt should unblock waitTipChanged");
-        assert!(
-            joined.is_ok_and(|resp| resp.is_ok()),
-            "interrupted waitTipChanged should return normally"
-        );
+            .expect("dropped waitTipChanged should release its server thread")
+            .expect("getTip should not fail");
     })
     .await;
 }
@@ -360,12 +360,12 @@ async fn mining_block_template_inspection() {
     .await;
 }
 
-/// waitNext (short timeout), waitNext interrupted by interruptWait, submitSolution (garbage), destroy.
+/// waitNext (short timeout), waitNext cancelled by dropping its promise, submitSolution (garbage), destroy.
 #[tokio::test]
 // Serialized because submitSolution behavior depends on current chain tip.
 #[serial_test::serial]
 async fn mining_block_template_lifecycle() {
-    with_mining_client(|_client, mining| async move {
+    with_mining_client(|init, mining| async move {
         let template = make_block_template(&mining).await;
 
         // waitNext — short timeout, no new transactions expected.
@@ -382,33 +382,32 @@ async fn mining_block_template_lifecycle() {
             "waitNext should time out without a new template"
         );
 
-        // waitNext — no timeout. Pin a local task on the wait, then interrupt it.
+        // waitNext — no timeout. Block a dedicated server thread on the wait,
+        // then drop the promise to cancel it.
+        let thread = make_thread(&init, "wait_next").await;
         let mut req = template.wait_next_request();
+        req.get().get_context().unwrap().set_thread(thread.clone());
         req.get()
             .init_options()
             .set_fee_threshold(mining_capnp::MAX_MONEY);
-        let waiter = tokio::task::spawn_local(req.send().promise);
+        let mut wait = req.send().promise;
 
-        // Give the waiter time to block before interrupting.
+        // Give the server thread time to block before cancelling.
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(
-            !waiter.is_finished(),
-            "waitNext returned before interruptWait"
+            (&mut wait).now_or_never().is_none(),
+            "waitNext returned before cancel"
         );
-        template
-            .interrupt_wait_request()
-            .send()
-            .promise
-            .await
-            .expect("interruptWait should not fail");
+        drop(wait);
 
-        let joined = tokio::time::timeout(Duration::from_secs(10), waiter)
+        // A server thread runs one call at a time, so this only completes if
+        // dropping the promise stopped the wait on the server.
+        let mut req = template.get_block_header_request();
+        req.get().get_context().unwrap().set_thread(thread);
+        tokio::time::timeout(Duration::from_secs(10), req.send().promise)
             .await
-            .expect("interrupWait should unblock waitNext");
-        assert!(
-            joined.is_ok_and(|resp| resp.is_ok()),
-            "interrupted waitNext should return normally"
-        );
+            .expect("dropped waitNext should release its server thread")
+            .expect("getBlockHeader should not fail");
 
         // submitSolution — garbage coinbase should be rejected.
         // This mutates the template, so we do it right before destroy.

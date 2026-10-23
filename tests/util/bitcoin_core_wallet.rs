@@ -9,6 +9,10 @@ fn bitcoin_bin() -> String {
     std::env::var("BITCOIN_BIN").unwrap_or_else(|_| "bitcoin".to_owned())
 }
 
+pub fn bitcoin_datadir() -> Option<String> {
+    std::env::var("BITCOIN_DATADIR").ok()
+}
+
 fn bitcoin_rpc(wallet: Option<&str>, args: &[&str]) -> Result<String, String> {
     let owned_args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
     bitcoin_rpc_owned(wallet, &owned_args)
@@ -29,6 +33,9 @@ pub fn bitcoin_test_wallet() -> String {
 fn bitcoin_rpc_owned(wallet: Option<&str>, args: &[String]) -> Result<String, String> {
     let mut command = Command::new(bitcoin_bin());
     command.arg("rpc").arg("-chain=regtest").arg("-rpcwait");
+    if let Some(datadir) = bitcoin_datadir() {
+        command.arg(format!("-datadir={datadir}"));
+    }
     if let Some(wallet) = wallet {
         command.arg(format!("-rpcwallet={wallet}"));
     }

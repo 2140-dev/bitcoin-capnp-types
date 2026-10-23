@@ -13,7 +13,7 @@ This policy applies to:
 
 ## Branch Model
 
-- `master` tracks the current active development line, i.e. Bitcoin Core `master`.
+- `master` tracks the current active development line, i.e. Bitcoin Core `master`. It is never released.
 - Maintenance branches (for example `30.x`, `31.x`) track stable backport lines, i.e. the Bitcoin Core branch of the same name.
 - A release must be cut from the branch that owns that version line.
 
@@ -36,6 +36,7 @@ This policy applies to:
 - `31.x` branch -> `0.2.x`
 - `32.x` branch -> `0.3.x`
 - Future Bitcoin Core branch lines should get a new crate minor line (`0.N.x`).
+- `master` carries a pre-release of the next line (for example `0.4.0-dev`), so it never matches a `^0.N` requirement. Bump it when a maintenance branch is created.
 
 ## Required Invariants
 
@@ -51,11 +52,11 @@ No detached tags and no crates publish without corresponding tag and GitHub rele
 
 ## Release Checklist
 
-1. Choose release branch (`master` or maintenance branch).
+1. Choose the maintenance branch that owns the version line.
 2. Update version in `Cargo.toml`.
-3. Run tests and merge the release PR.
+3. Run tests against the matching Bitcoin Core release tag (for example `v32.0`), and merge the release PR. A `0.N.0` release waits until that tag exists.
 4. Create and push annotated tag `vX.Y.Z` on the merged commit.
-5. Publish crate `X.Y.Z` to crates.io.
+5. Publish crate `X.Y.Z` to crates.io from a clean checkout of `vX.Y.Z`, so the crate records the source commit.
 6. Create GitHub release for `vX.Y.Z`.
 7. Verify branch/tag/release parity.
 

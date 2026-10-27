@@ -52,14 +52,15 @@ cmake --build build -j$(nproc)
 
 ### 3. Run tests
 
-If `bitcoin` is not in your `PATH`, set `BITCOIN_BIN` to the full path of
-the Bitcoin Core binary.
+The tests talk to the node only over its IPC socket, including the JSON-RPC
+calls they make through the `Rpc` interface. If the node was started with
+`-datadir`, set `BITCOIN_DATADIR` to the same path so the tests can find the
+socket.
 
 The test harness bootstraps regtest chain state and ensures the test wallet is
 available before running integration tests.
 
 ```sh
-BITCOIN_BIN=./build/bin/bitcoin \
 cargo test
 ```
 

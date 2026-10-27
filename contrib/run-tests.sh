@@ -44,5 +44,5 @@ BITCOIN_STARTED=1
 echo "==> Running cargo test"
 (
     cd "$REPO_ROOT"
-    BITCOIN_BIN="$BITCOIN_BIN" BITCOIN_DATADIR="$TEMP_DATADIR" cargo test
+    BITCOIN_DATADIR="$TEMP_DATADIR" cargo test
 )

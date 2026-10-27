@@ -12,8 +12,8 @@ mod util;
 
 use serde_json::{Value, json};
 use util::bitcoin_core::{
-    connect_unix_stream, destroy_template, make_block_template, mempool_tx_count, unix_socket_path,
-    with_init_client, with_mining_client, with_rpc_client,
+    connect_unix_stream, destroy_template, make_block_template, make_rpc, mempool_tx_count,
+    unix_socket_path, with_init_client, with_mining_client, with_rpc_client,
 };
 use util::bitcoin_core_wallet::{
     bitcoin_test_wallet, create_mempool_self_transfer, ensure_wallet_loaded_and_funded,
@@ -590,11 +590,12 @@ async fn mining_submit_block_duplicate() {
 // Serialized because this test may mine blocks to recover wallet funding.
 #[serial_test::serial]
 async fn mining_get_transactions() {
-    with_mining_client(|_client, mining| async move {
+    with_mining_client(|client, mining| async move {
+        let rpc = make_rpc(&client).await;
         let wallet = bitcoin_test_wallet();
-        ensure_wallet_loaded_and_funded(&wallet);
+        ensure_wallet_loaded_and_funded(&rpc, &wallet).await;
 
-        let real_tx = create_mempool_self_transfer(&wallet);
+        let real_tx = create_mempool_self_transfer(&rpc, &wallet).await;
         let real_txid = real_tx.compute_txid().to_byte_array();
         let real_wtxid = real_tx.compute_wtxid().to_byte_array();
         let real_raw_tx = encode_to_vec(&real_tx);
@@ -773,13 +774,16 @@ async fn wallet_helpers_create_mempool_transaction() {
     let wallet = bitcoin_test_wallet();
     assert!(!wallet.is_empty(), "test wallet name must not be empty");
 
-    ensure_wallet_loaded_and_funded(&wallet);
-    let before = mempool_tx_count();
-    let _tx = create_mempool_self_transfer(&wallet);
-    let after = mempool_tx_count();
-    assert_eq!(
-        after,
-        before + 1,
-        "self-transfer should add one mempool transaction"
-    );
+    with_rpc_client(|_init, rpc| async move {
+        ensure_wallet_loaded_and_funded(&rpc, &wallet).await;
+        let before = mempool_tx_count(&rpc).await;
+        let _tx = create_mempool_self_transfer(&rpc, &wallet).await;
+        let after = mempool_tx_count(&rpc).await;
+        assert_eq!(
+            after,
+            before + 1,
+            "self-transfer should add one mempool transaction"
+        );
+    })
+    .await;
 }

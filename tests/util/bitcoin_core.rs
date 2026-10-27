@@ -1,12 +1,11 @@
 use std::{
     future::Future,
     path::{Path, PathBuf},
-    sync::Once,
 };
 
 use crate::util::bitcoin_core_wallet::{
-    bitcoin_datadir, bitcoin_rpc_json, bitcoin_test_wallet, ensure_wallet_loaded,
-    mine_blocks_to_new_address,
+    bitcoin_datadir, bitcoin_test_wallet, ensure_wallet_loaded, mine_blocks_to_new_address,
+    rpc_call,
 };
 use bitcoin_capnp_types::{
     init_capnp::init,
@@ -16,12 +15,13 @@ use bitcoin_capnp_types::{
 };
 use capnp_rpc::{RpcSystem, rpc_twoparty_capnp::Side, twoparty::VatNetwork};
 use futures::io::BufReader;
-use serde::Deserialize;
+use serde_json::json;
 use tokio::net::{UnixStream, unix::OwnedReadHalf};
+use tokio::sync::OnceCell;
 use tokio::task::LocalSet;
 use tokio_util::compat::{Compat, TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
-static CHAIN_SETUP: Once = Once::new();
+static CHAIN_SETUP: OnceCell<()> = OnceCell::const_new();
 
 pub fn unix_socket_path() -> PathBuf {
     let bitcoin_dir = match bitcoin_datadir() {
@@ -43,27 +43,34 @@ pub fn unix_socket_path() -> PathBuf {
     regtest_dir.join("node.sock")
 }
 
-pub fn mempool_tx_count() -> usize {
-    let mempool_info: MempoolInfo = bitcoin_rpc_json(None, &["getmempoolinfo"])
-        .unwrap_or_else(|e| panic!("failed to query mempool info: {e}"));
-    mempool_info.size
+pub async fn mempool_tx_count(rpc: &rpc::Client) -> usize {
+    let mempool_info = rpc_call(rpc, "getmempoolinfo", json!([])).await;
+    mempool_info["size"]
+        .as_u64()
+        .expect("getmempoolinfo must report a numeric size") as usize
 }
 
-fn ensure_bootstrap_chain_ready() {
-    // `call_once` serializes bootstrap initialization across all tests in this
-    // process. Other callers block until this setup completes.
-    CHAIN_SETUP.call_once(|| {
-        let wallet = bitcoin_test_wallet();
-        ensure_chain_height_at_least(101, &wallet);
-    });
+async fn ensure_bootstrap_chain_ready(init: &init::Client) {
+    // `get_or_init` serializes bootstrap initialization across all tests in this
+    // process. Other callers wait until this setup completes.
+    CHAIN_SETUP
+        .get_or_init(|| async {
+            let rpc = make_rpc(init).await;
+            let wallet = bitcoin_test_wallet();
+            ensure_chain_height_at_least(&rpc, 101, &wallet).await;
+        })
+        .await;
 }
 
-fn ensure_chain_height_at_least(min_height: u32, wallet: &str) {
-    ensure_wallet_loaded(wallet);
-    let height: u32 = bitcoin_rpc_json(None, &["getblockcount"])
-        .unwrap_or_else(|e| panic!("failed to query block height: {e}"));
+async fn ensure_chain_height_at_least(rpc: &rpc::Client, min_height: u32, wallet: &str) {
+    ensure_wallet_loaded(rpc, wallet).await;
+    let height = rpc_call(rpc, "getblockcount", json!([]))
+        .await
+        .as_u64()
+        .expect("getblockcount must return a number") as u32;
     if height < min_height {
-        mine_blocks_to_new_address(wallet, min_height - height)
+        mine_blocks_to_new_address(rpc, wallet, min_height - height)
+            .await
             .unwrap_or_else(|e| panic!("failed to reach height {min_height}: {e}"));
     }
 }
@@ -139,8 +146,6 @@ pub async fn connect_unix_stream(
 pub async fn bootstrap(
     mut rpc_system: RpcSystem<capnp_rpc::rpc_twoparty_capnp::Side>,
 ) -> init::Client {
-    ensure_bootstrap_chain_ready();
-
     let client: init::Client = rpc_system.bootstrap(Side::Server);
     tokio::task::spawn_local(rpc_system);
     let create_client_response = client
@@ -157,6 +162,7 @@ pub async fn bootstrap(
     let mut pool_req = thread_map.make_pool_request();
     pool_req.get().set_count(4);
     pool_req.send().promise.await.unwrap();
+    ensure_bootstrap_chain_ready(&client).await;
     client
 }
 
@@ -189,11 +195,4 @@ pub async fn make_block_template(mining: &mining::Client) -> block_template::Cli
 /// Destroy a block template.
 pub async fn destroy_template(template: &block_template::Client) {
     template.destroy_request().send().promise.await.unwrap();
-}
-
-#[derive(Deserialize)]
-// Intentionally partial: tests currently only need the `size` field from
-// `getmempoolinfo`.
-struct MempoolInfo {
-    size: usize,
 }
